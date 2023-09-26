@@ -11,12 +11,18 @@ use sdl2::video::Window;
 use std::hash::Hash;
 use std::ops::Add;
 use std::collections::HashSet;
+use std::time::Duration;
 
 const GRID_X_SIZE: u32 = 40;
 const GRID_Y_SIZE: u32 = 30;
 const DOT_SIZE_IN_PX: u32 = 20;
+const INITIAL_SPEED: u32 = 15;
+const ACC_RATE: u32 = 1;
+const TOP_SPEED: u32 = 5;
 
-pub enum GameState {Playing, Paused}
+pub enum GameState {Playing, Paused, Over}
+
+#[derive(PartialEq)]
 pub enum PlayerDirection {Up, Down, Right, Left}
 
 #[derive(Clone, Copy, PartialEq, Hash, Eq)]
@@ -34,7 +40,7 @@ pub struct Renderer {canvas: WindowCanvas}
 
 impl Renderer{
     pub fn new(window: Window) -> Result<Renderer,String> {
-        let canvas = window.into_canvas().present_vsync().build().map_err(|e| e.to_string())?;
+        let canvas = window.into_canvas().build().map_err(|e| e.to_string())?;
         Ok(Renderer { canvas })
     }
 
@@ -63,6 +69,7 @@ impl Renderer{
         let color = match context.state {
             GameState::Playing => Color::RGB(0, 0, 0),
             GameState::Paused => Color::RGB(30, 30, 30),
+            GameState::Over => Color::RGB(30, 0, 0),
         };
         self.canvas.set_draw_color(color);
         self.canvas.clear();
@@ -86,9 +93,11 @@ impl Renderer{
 pub struct GameContext {
     pub player_position: Vec<Point>,
     pub player_direction: PlayerDirection,
+    pub score: u32,
     pub food: Point,
     pub state: GameState,
     pub space: Vec<Point>,
+    pub speed: u32,
 }
 
 impl GameContext {
@@ -107,9 +116,11 @@ impl GameContext {
         GameContext {
             player_position: vec![Point(3,1), Point(2,1), Point(1,1)],
             player_direction: PlayerDirection::Right,
+            score: 0,
             state: GameState::Paused,
             food: Point(3, 3),
             space: Self::getspace(),
+            speed: INITIAL_SPEED, // Lower, faster
         }
     }
 
@@ -125,8 +136,9 @@ impl GameContext {
             PlayerDirection::Right => *head_position + Point(1, 0),
         };
 
-        if next_head_position.0 >= GRID_X_SIZE.try_into().unwrap() || next_head_position.1 >= GRID_Y_SIZE.try_into().unwrap(){
-            self.state = GameState::Paused;
+        if next_head_position.0 >= GRID_X_SIZE.try_into().unwrap() || next_head_position.1 >= GRID_Y_SIZE.try_into().unwrap()
+        || next_head_position.0 < 0 || next_head_position.1 < 0 || self.player_position.contains(&next_head_position) {
+            self.state = GameState::Over;
             return
         }
 
@@ -134,6 +146,10 @@ impl GameContext {
             self.player_position.pop();
         } else {
             self.food = self.getfreespace();
+            self.score += 1;
+            if !((self.speed-ACC_RATE) <= TOP_SPEED){
+                self.speed -= ACC_RATE;
+            }
         }
         self.player_position.reverse();
         self.player_position.push(next_head_position);
@@ -148,24 +164,45 @@ impl GameContext {
         return *x;
     }
 
+    pub fn restartgame(&mut self){
+        self.player_position  = vec![Point(3,1), Point(2,1), Point(1,1)];
+        self.player_direction = PlayerDirection::Right;
+        self.food = Point(3, 3);
+        self.space = Self::getspace();
+        self.score = 0;
+        self.speed = INITIAL_SPEED;
+    }
+
     pub fn toggle_pause(&mut self){
         self.state = match self.state {
             GameState::Paused => GameState::Playing,
             GameState::Playing => GameState::Paused,
+            GameState::Over => {
+                self.restartgame();
+                GameState::Paused
+            }
         }
     }
 
     pub fn move_up(&mut self){
-        self.player_direction = PlayerDirection::Up;
+        if self.player_direction != PlayerDirection::Down{
+            self.player_direction = PlayerDirection::Up;
+        }
     }
     pub fn move_down(&mut self){
-        self.player_direction = PlayerDirection::Down;
+        if self.player_direction != PlayerDirection::Up{
+            self.player_direction = PlayerDirection::Down;
+        }
     }
     pub fn move_left(&mut self){
-        self.player_direction = PlayerDirection::Left;
+        if self.player_direction != PlayerDirection::Right{
+            self.player_direction = PlayerDirection::Left;
+        }
     }
     pub fn move_right(&mut self){
-        self.player_direction = PlayerDirection::Right;
+        if self.player_direction != PlayerDirection::Left{
+            self.player_direction = PlayerDirection::Right;
+        }
     }
 }
 
@@ -205,10 +242,10 @@ pub fn main() -> Result<(), String>{
             }
         }
     
-    // ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 30));
+    ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 60));
 
     frame_counter += 1;
-    if frame_counter % 10 == 0 {
+    if frame_counter % context.speed == 0 {
         context.next_tick();
         frame_counter = 0;
     }
